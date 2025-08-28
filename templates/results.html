@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crawler Results - Reddit Crawler Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn.visualize {
+            background-color: #9b59b6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Reddit Crawler Results</h1>
+            <a href="{{ url_for('index') }}" class="btn secondary">Back to Home</a>
+        </header>
+
+        <main>
+            {% if crawler_running %}
+            <div class="card loading">
+                <h2>Crawler is running...</h2>
+                <div class="loader"></div>
+                <p>Please wait while we fetch and process the data. This may take a few moments.</p>
+                <script>
+                    // Poll for status updates
+                    function checkStatus() {
+                        fetch('/status')
+                            .then(response => response.json())
+                            .then(data => {
+                                if (!data.running && data.complete) {
+                                    window.location.reload();
+                                } else {
+                                    setTimeout(checkStatus, 2000);
+                                }
+                            });
+                    }
+                    
+                    // Start polling
+                    setTimeout(checkStatus, 2000);
+                </script>
+            </div>
+            {% elif crawler_complete and results %}
+            <div class="results-header">
+                <h2>Found {{ results|length }} Results</h2>
+                <div class="action-buttons">
+                    <a href="{{ url_for('download_csv') }}" class="btn primary">Download as CSV</a>
+                    {% if run_id %}
+                    <a href="{{ url_for('visualize', run_id=run_id) }}" class="btn visualize">Visualize Data</a>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="results-list">
+                {% for post in results %}
+                <div class="card result">
+                    <h3><a href="{{ post.permalink }}" target="_blank">{{ post.title }}</a></h3>
+                    <div class="meta">
+                        <span>Posted by u/{{ post.author }} on {{ post.created_utc }}</span>
+                        <span>Score: {{ post.score }}</span>
+                        <span>Comments: {{ post.num_comments }}</span>
+                    </div>
+                    
+                    {% if post.summary %}
+                    <div class="summary">
+                        <h4>Summary:</h4>
+                        <p>{{ post.summary }}</p>
+                    </div>
+                    {% endif %}
+                    
+                    {% if post.top_comments %}
+                    <div class="comments">
+                        <h4>Top Comments:</h4>
+                        <ul>
+                            {% for comment in post.top_comments[:3] %}
+                            <li>
+                                <strong>u/{{ comment.author }}</strong> (Score: {{ comment.score }}):
+                                <p>{{ comment.body|truncate(150) }}</p>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% elif crawler_complete and not results %}
+            <div class="card">
+                <h2>No Results Found</h2>
+                <p>The crawler did not find any posts matching your criteria.</p>
+                <a href="{{ url_for('index') }}" class="btn primary">Try Again</a>
+            </div>
+            {% else %}
+            <div class="card">
+                <h2>No Crawler Run Yet</h2>
+                <p>You haven't run the crawler yet. Go back to the home page to start a crawler run.</p>
+                <a href="{{ url_for('index') }}" class="btn primary">Go to Home</a>
+            </div>
+            {% endif %}
+        </main>
+
+        <footer>
+            <p>Reddit Crawler Dashboard | Created with Flask</p>
+        </footer>
+    </div>
+</body>
+</html>
