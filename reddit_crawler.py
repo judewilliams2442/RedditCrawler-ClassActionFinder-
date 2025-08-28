@@ -88,10 +88,10 @@ def crawl_reddit(subreddit_name, post_limit=10, comment_limit=5, days_limit=30, 
     # Note: You need to create a Reddit app and get these credentials
     # Visit https://www.reddit.com/prefs/apps to create an app
     reddit = praw.Reddit(
-        client_id='0cqbd6uKTXB6DaBpHuMQSQ',
-        client_secret='VD037xjoUmKGRFB0WjVD3Z_YTrztAQ',
-        user_agent='python:clash.royale.crawler:v1.0 (by /u/caliASCTE)'  # Replace with your username
-    )
+    client_id=os.getenv("REDDIT_CLIENT_ID"),
+    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+    user_agent=os.getenv("REDDIT_USER_AGENT", "RedditCrawler:v1.0 (by u/yourusername)")
+    )   
     
     # Access the subreddit
     subreddit = reddit.subreddit(subreddit_name)
