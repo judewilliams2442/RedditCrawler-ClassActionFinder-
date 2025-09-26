@@ -8,12 +8,14 @@ import csv
 import json
 import uuid
 import datetime
-import sqlite3
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
+import sqlite3
+from db import get_connection, init_db
 from run_crawler import main as run_crawler_main
+
 
 app = Flask(__name__)
 # Use a strong secret key in production by setting the SECRET_KEY environment variable
@@ -31,106 +33,16 @@ crawler_running = False
 crawler_complete = False
 current_run_id = None
 
-# Database setup
-def get_db_connection():
-    # Use DATABASE_URL environment variable if set (for cloud deployment)
-    # Format: postgresql://username:password@host:port/database
-    database_url = os.environ.get('DATABASE_URL')
-    
-    if database_url and database_url.startswith('postgres'):
-        # For PostgreSQL in production
-        try:
-            import psycopg2
-            from psycopg2.extras import DictCursor
-            conn = psycopg2.connect(database_url)
-            conn.cursor_factory = DictCursor
-            return conn
-        except ImportError:
-            print("Warning: psycopg2 not installed. Falling back to SQLite.")
-            database_url = None
-    
-    # Default to SQLite for local development
-    conn = sqlite3.connect('crawler_results.db')
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    conn = get_db_connection()
-    
-    # Check if we're using PostgreSQL or SQLite
-    is_postgres = hasattr(conn, 'cursor_factory')
-    
-    if is_postgres:
-        # PostgreSQL syntax
-        with conn.cursor() as cur:
-            cur.execute('''
-            CREATE TABLE IF NOT EXISTS crawler_runs (
-                id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL,
-                subreddit TEXT NOT NULL,
-                posts_count INTEGER NOT NULL,
-                keyword TEXT,
-                results_count INTEGER NOT NULL
-            )
-            ''')
-            
-            cur.execute('''
-            CREATE TABLE IF NOT EXISTS crawler_results (
-                id SERIAL PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                url TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                author TEXT NOT NULL,
-                created_utc TEXT NOT NULL,
-                num_comments INTEGER NOT NULL,
-                summary TEXT,
-                top_comments TEXT,
-                FOREIGN KEY (run_id) REFERENCES crawler_runs (id)
-            )
-            ''')
-    else:
-        # SQLite syntax
-        conn.execute('''
-        CREATE TABLE IF NOT EXISTS crawler_runs (
-            id TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            subreddit TEXT NOT NULL,
-            posts_count INTEGER NOT NULL,
-            keyword TEXT,
-            results_count INTEGER NOT NULL
-        )
-        ''')
-        
-        conn.execute('''
-        CREATE TABLE IF NOT EXISTS crawler_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            url TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            author TEXT NOT NULL,
-            created_utc TEXT NOT NULL,
-            num_comments INTEGER NOT NULL,
-            summary TEXT,
-            top_comments TEXT,
-            FOREIGN KEY (run_id) REFERENCES crawler_runs (id)
-        )
-        ''')
-    
-    conn.commit()
-    
-    # Close connection differently based on database type
-    if is_postgres:
-        conn.close()
-    else:
-        conn.close()
+# Initialize database
+init_db()
 
 @app.route('/')
 def index():
     # Get previous crawler runs from database
-    conn = get_db_connection()
-    previous_runs = conn.execute('SELECT * FROM crawler_runs ORDER BY timestamp DESC LIMIT 10').fetchall()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM crawler_runs ORDER BY timestamp DESC LIMIT 10')
+    previous_runs = cur.fetchall()
     conn.close()
     
     return render_template('index.html', previous_runs=previous_runs)
@@ -202,18 +114,11 @@ def run_crawler_thread(subreddit, posts, keyword, run_id):
             crawler_results = posts_data
             
             # Save results to database
-            conn = get_db_connection()
-            
-            # Check if top_comments column exists, add it if not
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(crawler_results)")
-            columns = [column[1] for column in cursor.fetchall()]
-            
-            if 'top_comments' not in columns:
-                conn.execute('ALTER TABLE crawler_results ADD COLUMN top_comments TEXT')
+            conn = get_connection()
+            cur = conn.cursor()
             
             # First, save the run information
-            conn.execute(
+            cur.execute(
                 'INSERT INTO crawler_runs (id, timestamp, subreddit, posts_count, keyword, results_count) VALUES (?, ?, ?, ?, ?, ?)',
                 (run_id, datetime.datetime.now().isoformat(), subreddit, posts, keyword, len(posts_data))
             )
@@ -225,13 +130,14 @@ def run_crawler_thread(subreddit, posts, keyword, run_id):
                 if 'top_comments' in post and post['top_comments']:
                     top_comments_json = json.dumps(post['top_comments'])
                 
-                conn.execute(
+                cur.execute(
                     'INSERT INTO crawler_results (run_id, title, url, score, author, created_utc, num_comments, summary, top_comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     (run_id, post['title'], post['permalink'], post['score'], post['author'], post['created_utc'], 
                      post['num_comments'], post.get('summary', ''), top_comments_json)
                 )
             
             conn.commit()
+            cur.close()
             conn.close()
     except Exception as e:
         print(f"Error running crawler: {e}")
@@ -247,13 +153,18 @@ def results():
     
     # If a specific run_id is provided, load results from database
     if run_id and run_id != current_run_id:
-        conn = get_db_connection()
-        run_info = conn.execute('SELECT * FROM crawler_runs WHERE id = ?', (run_id,)).fetchone()
-        results_data = conn.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,)).fetchall()
-        conn.close()
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM crawler_runs WHERE id = ?', (run_id,))
+        run_info = cur.fetchone()
         
         if not run_info:
+            conn.close()
             return redirect(url_for('index'))
+        
+        cur.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,))
+        results_data = cur.fetchall()
+        conn.close()
         
         # Convert database rows to dictionaries
         results_list = []
@@ -307,13 +218,19 @@ def status():
 @app.route('/visualize/<run_id>')
 def visualize(run_id):
     # Get run info and results from database
-    conn = get_db_connection()
-    run_info = conn.execute('SELECT * FROM crawler_runs WHERE id = ?', (run_id,)).fetchone()
-    results_data = conn.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,)).fetchall()
-    conn.close()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM crawler_runs WHERE id = ?', (run_id,))
+    run_info = cur.fetchone()
     
     if not run_info:
+        conn.close()
         return redirect(url_for('index'))
+    
+    cur.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,))
+    results_data = cur.fetchall()
+    cur.close()
+    conn.close()
     
     # Convert database rows to dictionaries
     results_list = []
@@ -416,12 +333,15 @@ def download_csv():
     
     if run_id:
         # Get cached results from database
-        conn = get_db_connection()
-        run = conn.execute('SELECT * FROM crawler_runs WHERE id = ?', (run_id,)).fetchone()
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM crawler_runs WHERE id = ?', (run_id,))
+        run = cur.fetchone()
         
         if run:
             subreddit_name = run['subreddit']
-            results = conn.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,)).fetchall()
+            cur.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,))
+            results = cur.fetchall()
             
             for result in results:
                 # Get top comments if available
@@ -442,8 +362,7 @@ def download_csv():
                     'summary': result['summary'],
                     'top_comments': top_comments
                 })
-            
-            conn.close()
+        conn.close()
     else:
         # Use current results
         if not crawler_results:
@@ -513,8 +432,7 @@ if __name__ == '__main__':
         'flask': 'flask==2.3.3',
         'matplotlib': 'matplotlib',  # Use existing version or default
         'numpy': 'numpy',  # Use existing version or default
-        'gunicorn': 'gunicorn==20.1.0',  # For production deployment
-        'psycopg2-binary': 'psycopg2-binary==2.9.6'  # For PostgreSQL support
+        'gunicorn': 'gunicorn==20.1.0'  # For production deployment
     }
     
     missing_packages = []

@@ -87,11 +87,8 @@ def crawl_reddit(subreddit_name, post_limit=10, comment_limit=5, days_limit=30, 
     # Initialize Reddit API client
     # Note: You need to create a Reddit app and get these credentials
     # Visit https://www.reddit.com/prefs/apps to create an app
-    reddit = praw.Reddit(
-    client_id=os.getenv("REDDIT_CLIENT_ID"),
-    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-    user_agent=os.getenv("REDDIT_USER_AGENT", "RedditCrawler:v1.0 (by u/yourusername)")
-    )   
+    # This will automatically use credentials from praw.ini
+    reddit = praw.Reddit()   
     
     # Access the subreddit
     subreddit = reddit.subreddit(subreddit_name)
