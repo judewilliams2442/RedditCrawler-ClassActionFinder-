@@ -112,6 +112,22 @@
                     </div>
                     {% endfor %}
                 </div>
+                
+                <!-- Summarize All Posts Section -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+                    <h3>AI Summary</h3>
+                    <p>Generate a comprehensive summary of all crawled posts using AI:</p>
+                    <button id="summarizeAllBtn" class="btn primary" onclick="summarizeAllPosts()">
+                        Summarize All Posts
+                    </button>
+                    <div id="summaryResult" style="margin-top: 15px; display: none;">
+                        <h4>Summary:</h4>
+                        <div id="summaryContent" style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff; white-space: pre-wrap;"></div>
+                    </div>
+                    <div id="summaryError" style="margin-top: 15px; display: none;">
+                        <div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; border-left: 4px solid #dc3545;"></div>
+                    </div>
+                </div>
             </div>
             {% endif %}
 
@@ -128,5 +144,51 @@
             <p>Reddit Crawler Dashboard | Created with Flask</p>
         </footer>
     </div>
+
+    <script>
+        async function summarizeAllPosts() {
+            const btn = document.getElementById('summarizeAllBtn');
+            const summaryResult = document.getElementById('summaryResult');
+            const summaryContent = document.getElementById('summaryContent');
+            const summaryError = document.getElementById('summaryError');
+            
+            // Reset display states
+            summaryResult.style.display = 'none';
+            summaryError.style.display = 'none';
+            
+            // Show loading state
+            btn.disabled = true;
+            btn.textContent = 'Generating Summary...';
+            
+            try {
+                const response = await fetch('/summarize_all', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Display successful summary
+                    summaryContent.textContent = data.summary;
+                    summaryResult.style.display = 'block';
+                } else {
+                    // Display error message
+                    summaryError.querySelector('div').textContent = data.summary || 'An error occurred while generating the summary.';
+                    summaryError.style.display = 'block';
+                }
+            } catch (error) {
+                // Display network error
+                summaryError.querySelector('div').textContent = 'Network error: Could not connect to the server. Please try again.';
+                summaryError.style.display = 'block';
+            } finally {
+                // Reset button state
+                btn.disabled = false;
+                btn.textContent = 'Summarize All Posts';
+            }
+        }
+    </script>
 </body>
 </html>

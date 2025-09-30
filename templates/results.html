@@ -15,6 +15,34 @@
         .btn.visualize {
             background-color: #9b59b6;
         }
+        
+        .summary-container {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .summary-container h3 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -52,11 +80,17 @@
             <div class="results-header">
                 <h2>Found {{ results|length }} Results</h2>
                 <div class="action-buttons">
-                    <a href="{{ url_for('download_csv') }}" class="btn primary">Download as CSV</a>
+                    <a href="{{ url_for('download_csv', run_id=run_id) }}" class="btn primary">Download as CSV</a>
                     {% if run_id %}
                     <a href="{{ url_for('visualize', run_id=run_id) }}" class="btn visualize">Visualize Data</a>
                     {% endif %}
+                    <button id="summarize-all-btn" class="btn secondary">Summarize All Posts</button>
                 </div>
+            </div>
+            
+            <div id="summary-container" class="summary-container" style="display: none;">
+                <h3>Summary of All Posts</h3>
+                <div id="summary-content"></div>
             </div>
             
             <div class="results-list">
@@ -111,5 +145,53 @@
             <p>Reddit Crawler Dashboard | Created with Flask</p>
         </footer>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const summarizeBtn = document.getElementById('summarize-all-btn');
+            if (!summarizeBtn) return;
+
+            summarizeBtn.addEventListener('click', function() {
+                const summaryContainer = document.getElementById('summary-container');
+                const summaryContent = document.getElementById('summary-content');
+                
+                // Show loading state
+                summaryContent.innerHTML = '<div class="loader"></div><p>Summarizing all posts with Ollama (gemma3)... This may take a moment.</p>';
+                summaryContainer.style.display = 'block';
+                this.disabled = true;
+                this.textContent = 'Summarizing...';
+
+                // Send to backend for summarization
+                fetch("{{ url_for('summarize_all') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ run_id: "{{ run_id }}" }),
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.summary) {
+                        // Replace newline characters with <br> for proper HTML rendering
+                        summaryContent.innerHTML = `<p>${data.summary.replace(/\n/g, '<br>')}</p>`;
+                    } else {
+                        summaryContent.innerHTML = '<p>Error: Could not retrieve summary. The response was empty.</p>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    summaryContent.innerHTML = `<p>An error occurred while summarizing the posts. Please ensure Ollama is running and accessible.</p><p><small>${error}</small></p>`;
+                })
+                .finally(() => {
+                    this.disabled = false;
+                    this.textContent = 'Summarize All Posts';
+                });
+            });
+        });
+    </script>
 </body>
 </html>

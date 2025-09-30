@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, session
+import requests
 import os
 import pandas as pd
 import threading
@@ -15,6 +16,7 @@ import numpy as np
 import sqlite3
 from db import get_connection, init_db
 from run_crawler import main as run_crawler_main
+from ollama_summarizer import summarize_text
 
 
 app = Flask(__name__)
@@ -46,6 +48,161 @@ def index():
     conn.close()
     
     return render_template('index.html', previous_runs=previous_runs)
+
+@app.route('/ollama-summarize', methods=['POST'])
+def ollama_summarize():
+    """
+    API endpoint to summarize text using Ollama.
+    
+    Expects JSON with:
+    - text: The Reddit post content to summarize
+    - model: (optional) The Ollama model name, defaults to "llama3"
+    
+    Returns JSON with:
+    - summary: The generated summary
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Missing required parameter: text'}), 400
+        
+        text = data['text']
+        model = data.get('model', 'llama3')  # Default to llama3 if not specified
+        
+        # Call the Ollama summarizer
+        summary = summarize_text(text, model)
+        
+        return jsonify({'summary': summary})
+    
+    except Exception as e:
+        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+
+@app.route('/summarize', methods=['POST'])
+def summarize():
+    """
+    API endpoint to summarize text using Ollama with gemma3 model.
+    
+    Expects JSON with:
+    - text: The text to summarize
+    
+    Returns JSON with:
+    - summary: The generated summary
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            return jsonify({'summary': 'Error: Missing required parameter: text'}), 400
+        
+        text = data['text']
+        
+        # Prepare the request to Ollama
+        url = "http://localhost:11434/api/generate"
+        prompt = f"Summarize this: {text}"
+        
+        payload = {
+            "model": "gemma3",
+            "prompt": prompt
+        }
+        
+        # Send the request and handle streaming response
+        response = requests.post(url, json=payload, stream=True)
+        
+        # Check if the request was successful
+        if response.status_code != 200:
+            return jsonify({'summary': f'Error: Ollama returned status code {response.status_code}'}), 500
+        
+        # Process the streaming response
+        summary = ""
+        for line in response.iter_lines():
+            if line:
+                # Parse the JSON response
+                try:
+                    json_response = json.loads(line.decode('utf-8'))
+                    if 'response' in json_response:
+                        summary += json_response['response']
+                except json.JSONDecodeError:
+                    continue
+        
+        return jsonify({'summary': summary})
+    
+    except requests.exceptions.ConnectionError:
+        return jsonify({'summary': 'Error: Could not connect to Ollama. Make sure it is running on localhost:11434.'}), 503
+    except Exception as e:
+        return jsonify({'summary': f'Error: An unexpected error occurred: {str(e)}'}), 500
+
+@app.route('/summarize-all', methods=['POST'])
+def summarize_all():
+    """
+    API endpoint to summarize all posts from the current or specified run.
+    """
+    try:
+        data = request.get_json()
+        run_id = data.get('run_id') if data else None
+        
+        # If no run_id provided, use current run
+        if not run_id:
+            run_id = current_run_id
+        
+        # Get posts from database
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM crawler_results WHERE run_id = ?', (run_id,))
+        results_data = cur.fetchall()
+        conn.close()
+        
+        if not results_data:
+            return jsonify({'summary': 'Error: No posts found to summarize'}), 400
+        
+        # Extract content from posts
+        post_contents = []
+        for row in results_data:
+            # Use summary if available, otherwise use title
+            content = row['summary'] if row['summary'] else row['title']
+            if content and content.strip():
+                post_contents.append(content)
+        
+        if not post_contents:
+            return jsonify({'summary': 'Error: No content found in posts to summarize'}), 400
+        
+        # Concatenate all post contents
+        full_text = "\n\n---\n\n".join(post_contents)
+        
+        # Prepare the request to Ollama
+        url = "http://localhost:11434/api/generate"
+        prompt = f"Provide a high-level summary of the key themes and common issues from the following Reddit posts:\n\n{full_text}"
+        
+        payload = {
+            "model": "gemma3",
+            "prompt": prompt
+        }
+        
+        # Send the request and handle streaming response
+        response = requests.post(url, json=payload, stream=True)
+        
+        # Check if the request was successful
+        if response.status_code != 200:
+            return jsonify({'summary': f'Error: Ollama returned status code {response.status_code}'}), 500
+        
+        # Process the streaming response
+        summary = ""
+        for line in response.iter_lines():
+            if line:
+                # Parse the JSON response
+                try:
+                    json_response = json.loads(line.decode('utf-8'))
+                    if 'response' in json_response:
+                        summary += json_response['response']
+                except json.JSONDecodeError:
+                    continue
+        
+        return jsonify({'summary': summary})
+    
+    except requests.exceptions.ConnectionError:
+        return jsonify({'summary': 'Error: Could not connect to Ollama. Make sure it is running on localhost:11434.'}), 503
+    except Exception as e:
+        return jsonify({'summary': f'Error: An unexpected error occurred: {str(e)}'}), 500
 
 @app.route('/run-crawler', methods=['POST'])
 def run_crawler():
