@@ -49,3 +49,5 @@ instance/
 # OS specific
 .DS_Store
 Thumbs.db
+
+praw.ini
